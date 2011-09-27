@@ -42,7 +42,9 @@ import sys
 import random
 import logging
 import operator
+import itertools
 import functools
+from collections import Counter
 from optparse import OptionParser
 
 def parse_command_line():
@@ -69,10 +71,15 @@ def parse_command_line():
                       default=False,
                       help="print the header")
     parser.add_option("-n", "--dont-normalize-founders",
-                      action="store_true", dest="no_norm_founders",
+                      action="store_true", dest="no_norm_found",
                       default=False,
-                      help="swap founders' haplotypes such that the minimum amount of "
+                      help="do not swap founders' haplotypes such that the minimum amount of "
                       "phase error is obtained")
+    parser.add_option("-p", "--normalize-pseudofounders",
+                      action="store_true", dest="norm_pseudo",
+                      default=False,
+                      help="swap haplotypes of individuals whose parents are not genotyped "
+                      "such that the minimum amount of phase error is obtained")
     parser.add_option("-v", "--verbose",
                       action="store_true", dest="verbose",
                       default=False,
@@ -81,20 +88,23 @@ def parse_command_line():
 
     return(options)
 
+def list_el(v):
+    return [ l for l,e in zip(itertools.count(0), v) if e==1 ]
+
 
 def compute_errors(genotype, orig_hp, orig_hm, res_hp, res_hm):
     orig_gen= [ encoding[str(hp) + ' ' + str(hm)] for hp,hm in zip(orig_hp, orig_hm) ]
     res_gen= [ encoding[str(hp) + ' ' + str(hm)] for hp,hm in zip(res_hp, res_hm) ]
-    gen_dif= [ 0 if (g != 0 or orig == res) else 1
+    gen_dif= [ 0 if (g != 0 or orig == 0 or res == 0 or orig == res) else 1
                for g,orig,res in zip(genotype, orig_gen, res_gen) ]
-    pat_dif= [ 0 if orig == res else 1
+    pat_dif= [ 0 if orig == 0 or orig == res else 1
                for orig,res in zip(orig_hp, res_hp) ]
-    mat_dif= [ 0 if orig == res else 1
+    mat_dif= [ 0 if orig == 0 or orig == res else 1
                for orig,res in zip(orig_hm, res_hm) ]
-    mask_pat_dif= [ 0 if g == 0 else diff
-                    for diff, g in zip(pat_dif, genotype) ]
-    mask_mat_dif= [ 0 if g == 0 else diff
-                    for diff, g in zip(mat_dif, genotype) ]
+    mask_pat_dif= [ 0 if g == 0 or h == 0 else diff
+                    for diff, g, h in zip(pat_dif, genotype, orig_hp) ]
+    mask_mat_dif= [ 0 if g == 0 or h == 0 else diff
+                    for diff, g, h in zip(mat_dif, genotype, orig_hm) ]
     err_gen= sum(gen_dif)
     err_pat_hap= sum(pat_dif)
     err_mat_hap= sum(mat_dif)
@@ -103,31 +113,39 @@ def compute_errors(genotype, orig_hp, orig_hm, res_hp, res_hm):
 
     return ( err_gen,
              err_pat_hap, err_mat_hap,
-             err_mask_pat_hap, err_mask_mat_hap )
+             err_mask_pat_hap, err_mask_mat_hap,
+             [ list_el(l) for l in (gen_dif, pat_dif, mat_dif,
+                                    mask_pat_dif, mask_mat_dif) ] )
 
-def compute_errors_with_swap(genotype, orig_hp, orig_hm, res_hp, res_hm, can_swap):
-    if ( (can_swap) and
-         (orig_ped[individual][1] == '0') and
-         (orig_ped[individual][2] == '0') ):
+def compute_errors_with_swap(orig_ped, genotype, orig_hp, orig_hm, res_hp, res_hm, norm_found, norm_pseudofound):
+    (father, mother)= orig_ped[individual][1:3]
+    if ( ( (norm_found) and (father == '0') and (mother == '0') ) or
+         ( (norm_pseudofound) and
+           (father != '0') and (father not in orig_ped) and
+           (mother != '0') and (mother not in orig_ped) ) ):
         ris1= compute_errors(genotype, orig_hp, orig_hm, res_hp, res_hm)
         ris2= compute_errors(genotype, orig_hp, orig_hm, res_hm, res_hp)
-        return ris1 if sum(ris1) < sum(ris2) else ris2
+        return ris1 if sum(ris1[0:-1]) < sum(ris2[0:-1]) else ris2
     else:
         return compute_errors(genotype, orig_hp, orig_hm, res_hp, res_hm)
 
 def compute_recombinations(ind_id, p_id, h, ph1, ph2):
+    lh= len(h)
     rec1= []
     rec2= []
     (phase1, phase2)= (0, 1)
     ph= (ph1, ph2)
-    for l in range(len(h)):
-        if h[l] != ph[phase1][l]:
+    for (l, a, a1, a2) in zip(range(lh), h, ph1, ph2):
+        if a == 0 or a1 == 0 or a2 == 0:
+            continue
+        av= (a1, a2)
+        if a != av[phase1]:
             phase1= 1-phase1
-            assert(h[l] == ph[phase1][l])
+            assert(a == av[phase1])
             rec1.append((ind_id, p_id, l))
-        if h[l] != ph[phase2][l]:
+        if a != av[phase2]:
             phase2= 1-phase2
-            assert(h[l] == ph[phase2][l])
+            assert(a == av[phase2])
             rec2.append((ind_id, p_id, l))
     if len(rec1) <= len(rec2):
         return rec1
@@ -224,9 +242,11 @@ for r in res_ped_str:
     res_ped[split_r[1]]= [split_r[1], split_r[2], split_r[3], pat_hap, mat_hap, res_gen]
 
 logging.info("Checking basic consistency...")
-if ( orig_ped.keys() != res_ped.keys() or
-     orig_ped.keys() != genotypes.keys() or
-     res_ped.keys() != genotypes.keys() ):
+orig_ped_ind= frozenset(orig_ped.keys())
+res_ped_ind= frozenset(res_ped.keys())
+genotypes_ind= frozenset(genotypes.keys())
+if ( res_ped_ind != genotypes_ind or
+     orig_ped_ind > genotypes_ind ):
     logging.fatal("The two pedigrees refer to different individuals.")
     sys.exit(1)
 
@@ -251,21 +271,21 @@ logging.info("Computing recombinations...")
 orig_rec= []
 for ind_id in orig_ped:
     ind= orig_ped[ind_id]
-    if ind[1] != '0':
+    if ind[1] != '0' and (ind[1] in orig_ped):
         orig_rec.extend(compute_recombinations(ind_id, ind[1],
                                                ind[3], orig_ped[ind[1]][3], orig_ped[ind[1]][4]))
-    if ind[2] != '0':
+    if ind[2] != '0' and (ind[2] in orig_ped):
         orig_rec.extend(compute_recombinations(ind_id, ind[2],
                                                ind[4], orig_ped[ind[2]][3], orig_ped[ind[2]][4]))
 orig_rec=frozenset(orig_rec)
 # Compute recombinations in the resulting haplotype configuration
 res_rec= []
-for ind_id in res_ped:
+for ind_id in orig_ped:
     ind= res_ped[ind_id]
-    if ind[1] != '0':
+    if ind[1] != '0' and ind[1] in orig_ped:
         res_rec.extend(compute_recombinations(ind_id, ind[1],
                                               ind[3], res_ped[ind[1]][3], res_ped[ind[1]][4]))
-    if ind[2] != '0':
+    if ind[2] != '0' and ind[2] in orig_ped:
         res_rec.extend(compute_recombinations(ind_id, ind[2],
                                               ind[4], res_ped[ind[2]][3], res_ped[ind[2]][4]))
 res_rec=frozenset(res_rec)
@@ -298,6 +318,19 @@ for ind_id in orig_ped:
                       ",".join(ind_res[0:3]) )
         sys.exit(1)
 
+logging.info("Computing pedigree stats...")
+n_trios= Counter( ( tuple(orig_ped[ind_id][1:3])
+                    for ind_id in orig_ped
+                    if orig_ped[ind_id][1:3] != ('0', '0') ) )
+n_children= Counter()
+n_children.update( ( orig_ped[ind_id][1]
+                     for ind_id in orig_ped
+                     if orig_ped[ind_id][1] != '0' ) )
+n_children.update( ( orig_ped[ind_id][2]
+                     for ind_id in orig_ped
+                     if orig_ped[ind_id][2] != '0' ) )
+
+
 logging.info("Computing differences...")
 
 tot_gen= 0
@@ -316,34 +349,57 @@ tot_err_mat_hap= 0.0
 tot_err_mask_pat_hap= 0.0
 tot_err_mask_mat_hap= 0.0
 
+loci= set()
+err_gen_loci= Counter()
+err_pat_hap_loci= Counter()
+err_mat_hap_loci= Counter()
+err_mask_pat_hap_loci= Counter()
+err_mask_mat_hap_loci= Counter()
+loci_counters= ( err_gen_loci, err_pat_hap_loci, err_mat_hap_loci,
+                 err_mask_pat_hap_loci, err_mask_mat_hap_loci )
+
+
 if options.full and options.header:
-    print('"input file"', '"result file"',
-          '"individual id"',
-          '"father id"', '"mother id"',
+    print('"input_file"', '"result_file"',
+          '"individual_id"',
+          '"father_id"', '"mother_id"',
           '"genotype_length"',
           '"heterozygous"', '"homozygous"', '"missing"',
-          '"genotype errors"',
-          '"paternal haplotype errors"', '"maternal haplotype errors"',
-          '"paternal haplotype errors wo missing"', '"maternal haplotype errors wo missing"',
+          '"genotype_errors"',
+          '"paternal_haplotype_errors"', '"maternal_haplotype_errors"',
+          '"paternal_haplotype_errors_wo_missing"', '"maternal_haplotype_errors_wo_missing"',
           sep="\t")
-for individual in iter(orig_ped):
+descs=( "# gen_err", "# pat_hap_err", "# mat_hap_err", "# pat_hap_err_miss", "# mat_hap_err_miss" )
+norm_founders= not options.no_norm_found
+norm_pseudofounders= options.norm_pseudo
+for individual in orig_ped:
 
     genotype= genotypes[individual]
     ( err_gen,
       err_pat_hap, err_mat_hap,
-      err_mask_pat_hap, err_mask_mat_hap ) = compute_errors_with_swap(genotype,
-                                                                      orig_ped[individual][3],
-                                                                      orig_ped[individual][4],
-                                                                      res_ped[individual][3],
-                                                                      res_ped[individual][4],
-                                                                      not options.no_norm_founders)
+      err_mask_pat_hap, err_mask_mat_hap,
+      err_lists ) = compute_errors_with_swap(orig_ped,
+                                             genotype,
+                                             orig_ped[individual][3],
+                                             orig_ped[individual][4],
+                                             res_ped[individual][3],
+                                             res_ped[individual][4],
+                                             norm_founders, norm_pseudofounders)
 
     n_gen= len(genotype)
     n_het= sum( (g == 3) for g in genotype )
     n_hom= sum( (g == 1 or g == 2) for g in genotype )
     n_mis= sum( (g == 0) for g in genotype )
+    for counter, l in zip(loci_counters, err_lists):
+        counter.update(l)
+        loci= loci.union(l)
 
     if options.full:
+        (father, mother)= orig_ped[individual][1:3]
+        is_founder= (father, mother) == ('0', '0')
+        is_pseudo= ( father not in orig_ped ) or ( mother not in orig_ped )
+        full_sibs= n_trios[(father, mother)] - 1
+        half_sibs= n_children[father] + n_children[mother] - full_sibs - 2
         print(options.original,
               options.result,
               individual,
@@ -354,7 +410,14 @@ for individual in iter(orig_ped):
               err_gen,
               err_pat_hap, err_mat_hap,
               err_mask_pat_hap, err_mask_mat_hap,
+              n_children[individual],
+              full_sibs, half_sibs,
+              is_founder, is_pseudo,
               sep="\t")
+        err_msg= [ "{}, {}, {}".format(d, individual, ", ".join([str(i) for i in l]))
+                   for d,l in zip(descs, err_lists) if len(l)>0 ]
+        if len(err_msg)>0:
+            print("\n".join(err_msg))
 
     tot_gen += n_gen
     tot_het += n_het
@@ -443,3 +506,17 @@ if not options.full:
           len(orig_err - res_err),
           len(res_err - orig_err),
           sep="\t")
+else:
+    if options.header:
+        print('"input_file"', '"result_file"',
+              '"locus"',
+              '"genotype_errors"',
+              '"paternal_haplotype_errors"', '"maternal_haplotype_errors"',
+              '"paternal_haplotype_errors_wo_missing"', '"maternal_haplotype_errors_wo_missing"',
+              sep="\t")
+    for locus in range(max(loci)+1):
+        print(options.original,
+              options.result,
+              locus,
+              "\t".join([ str(counter[locus]) for counter in loci_counters ]),
+              sep="\t")
