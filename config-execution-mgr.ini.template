@@ -1,0 +1,51 @@
+##
+## Configuration file for 'execute-reHCstar-mgr.sh'
+##
+## It must be placed in the current directory
+
+
+## * Required parameters
+
+## reHCstar-mgr
+reHCmgr_exe="./reHCstar-mgr.py"
+
+## reHCstar
+reHC_exe="./reHCstar"
+
+## Placeholders for reHCstar/reHCstar-mgr communication
+reHC_io="-p \\\"{pedigree}\\\" -h \\\"{haplotypes}\\\" -a \\\"{assumptions}\\\""
+## Invocation of the SAT solver
+## Uncomment the following line for the invocation of an external solver
+reHC_sat_mode="-3 --sat-cmdline \\\"./clasp > %%OUTPUT%%\\\" --pipe"
+## Uncomment the following line for the invocation of the internal solver
+#reHC_sat_mode="-4"
+
+
+## * Optional parameters
+
+## How are genotypes divided into blocks by reHCstar-mgr ?
+#reHCmgr_blocks="-l 50 -a 0"
+reHCmgr_blocks=""
+
+## Additional reHCstar-mgr program options
+reHCmgr_opts=""
+reHCmgr_opts="${reHCmgr_opts} -v" ## Be verbose
+
+## How are errors handled?
+error_handler=""    # errors = off
+#error_handler="--global-error --global-error-number=1"
+
+## How are recombinations handled?
+recomb_handler="--global-recomb --global-recomb-number \\\"{number}\\\" --global-recomb-min-number \\\"{min_number}\\\""
+
+## Input pedigrees
+pedigrees=gen-ped-*.txt
+
+dest_dir="./rehcstar-out/"
+
+## Running time limit (in minutes, 0 = no limit)
+##   common values: 60 (1h), 360 (6h), 1440 (1day)
+time_limit=0
+## Memory limit (in MB, 0 = no limit)
+##   common values: 1024 (1GB), 2048 (2GB), 4096 (4GB), 8192 (8GB)
+memory_limit=0
