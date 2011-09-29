@@ -29,7 +29,7 @@
 
 ##########
 #
-#  execute-reHC.sh
+#  execute-reHCstar.sh
 #
 #  A simple script that execute reHC in the 'create-read' mode on
 #  every genotyped pedigree of the current directory.
