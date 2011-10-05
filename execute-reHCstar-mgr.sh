@@ -112,10 +112,15 @@ for full_pedigree in ${pedigrees}; do
     pedigree=`basename ${full_pedigree}`
     echo "`date`  --  Executing on ${pedigree}"
     echo "`date`  --  Executing on ${pedigree}" >> execution.log
-    echo "${limits# } nice time -f \"%U %S %E %x %M %C\" -o ${dest_dir}/time-${pedigree}" \
-        "${reHCmgr_partial}" \
-        "-p ${full_pedigree} -r ${dest_dir}/hap-${pedigree} > ${dest_dir}/log-${pedigree} 2>&1" > "${dest_dir}/cmd-${pedigree}"
-    source "${dest_dir}/cmd-${pedigree}"
+    (
+        if [ -f "config-execution-mgr-${pedigree}.ini" ]; then
+            source "./config-execution-mgr-${pedigree}.ini"
+        fi
+        echo "${limits# } nice time -f \"%U %S %E %x %M %C\" -o ${dest_dir}/time-${pedigree}" \
+            "${reHCmgr_partial} ${reHCmgr_local_opts}" \
+            "-p ${full_pedigree} -r ${dest_dir}/hap-${pedigree} > ${dest_dir}/log-${pedigree} 2>&1" > "${dest_dir}/cmd-${pedigree}"
+        source "${dest_dir}/cmd-${pedigree}"
+    )
 done
 echo "`date`  --  Experimentation ended"
 echo "`date`  --  Experimentation ended" >> execution.log
