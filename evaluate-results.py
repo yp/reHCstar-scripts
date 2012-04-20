@@ -368,6 +368,8 @@ if options.full and options.header:
           '"genotype_errors"',
           '"paternal_haplotype_errors"', '"maternal_haplotype_errors"',
           '"paternal_haplotype_errors_wo_missing"', '"maternal_haplotype_errors_wo_missing"',
+          '"no. of children"', '"no. of full sibs"', '"no. of half sibs"',
+          '"is_founder?"', '"is pseudo founder?"',
           sep="\t")
 descs=( "# gen_err", "# pat_hap_err", "# mat_hap_err", "# pat_hap_err_miss", "# mat_hap_err_miss" )
 norm_founders= not options.no_norm_found
@@ -398,8 +400,12 @@ for individual in orig_ped:
         (father, mother)= orig_ped[individual][1:3]
         is_founder= (father, mother) == ('0', '0')
         is_pseudo= ( father not in orig_ped ) or ( mother not in orig_ped )
-        full_sibs= n_trios[(father, mother)] - 1
-        half_sibs= n_children[father] + n_children[mother] - full_sibs - 2
+        if is_founder:
+            full_sibs= 0
+            half_sibs= 0
+        else:
+            full_sibs= n_trios[(father, mother)] - 1
+            half_sibs= n_children[father] + n_children[mother] - full_sibs - 2
         print(options.original,
               options.result,
               individual,
