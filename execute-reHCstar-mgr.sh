@@ -40,6 +40,13 @@
 
 LANG=C
 
+# Check if GNU parallel is available
+HAS_PARALLEL="no"
+if [ -n "`which parallel`" ];
+then
+    HAS_PARALLEL=`parallel -V 2> /dev/null | head -n1 | grep -q "^GNU" && echo "yes" || echo "no"`
+fi
+
 # Check existence of required files
 if [ ! -f "./config-execution-mgr.ini"  ];
 then
@@ -59,6 +66,7 @@ pedigrees=gen-ped-*.txt
 dest_dir="./rehcstar-out/"
 time_limit=0   # no limit
 memory_limit=0   # no limit
+njobs=2   # two concurrent jobs
 
 # Read configuration
 source ./config-execution-mgr.ini
@@ -70,8 +78,18 @@ if [ -z "${reHC_sat_mode}" ]; then echo "Parameter 'reHC_sat_mode' not defined. 
 if [ -z "${pedigrees}" ]; then echo "Parameter 'pedigrees' not defined. Aborting..."; exit 1; fi
 time_limit=`echo ${time_limit} | sed 's/[^0-9]//g'`   # Remove non-digits
 memory_limit=`echo ${memory_limit} | sed 's/[^0-9]//g'`
+njobs=`echo ${njobs} | sed 's/[^0-9]//g'`
 if [ -z "${time_limit}" ]; then echo "Parameter 'time_limit' is not correctly defined. Aborting..."; exit 1; fi
 if [ -z "${memory_limit}" ]; then echo "Parameter 'memory_limit' is not correctly defined. Aborting..."; exit 1; fi
+if [ -z "${njobs}" ]; then echo "Parameter 'njobs' is not correctly defined. Aborting..."; exit 1; fi
+
+if [ $HAS_PARALLEL = "yes" ];
+then
+    CMDPREF="sem --id \"rehcstarmgr-`basename $PWD`\" --jobs $njobs"
+else
+    echo "GNU parallel not found! Serial execution..."
+    CMDPREF=""
+fi
 
 if [ ! -x "${reHCmgr_exe}" ]; then echo "Manager program '${reHCmgr_exe}' not found or not executable. Aborting..."; exit 1; fi
 if [ ! -x "${reHC_exe}" ]; then echo "reHCstar program '${reHC_exe}' not found or not executable. Aborting..."; exit 1; fi
@@ -119,8 +137,12 @@ for full_pedigree in ${pedigrees}; do
         echo "${limits# } nice time -f \"%U %S %E %x %M %C\" -o ${dest_dir}/time-${pedigree}" \
             "${reHCmgr_partial} ${reHCmgr_local_opts}" \
             "-p ${full_pedigree} -r ${dest_dir}/hap-${pedigree} > ${dest_dir}/log-${pedigree} 2>&1" > "${dest_dir}/cmd-${pedigree}"
-        source "${dest_dir}/cmd-${pedigree}"
+        ${CMDPREF} source "${dest_dir}/cmd-${pedigree}"
     )
 done
+if [ $HAS_PARALLEL = "yes" ];
+then
+    sem --id "rehcstarmgr-`basename $PWD`" --wait
+fi
 echo "`date`  --  Experimentation ended"
 echo "`date`  --  Experimentation ended" >> execution.log
