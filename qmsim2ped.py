@@ -41,6 +41,7 @@ from __future__ import print_function
 import bisect
 import fnmatch
 import logging
+import math
 import optparse
 import os
 import random
@@ -236,20 +237,11 @@ for counter, popfiles in enumerate(zip(pedfiles, genfiles, mrkfiles, xoverfiles)
 
     orig_genotypes = genotypes
 
-    logging.debug("Simulating genotyping errors with uniform probability %.5f...",
-                  error_prob)
-    errors = [ [ 0 if (random.random() >= error_prob) else 1
-                 for g in gen ]
-               for gen in genotypes ]
-    genotypes = [ [ g if e==0 else random.choice(others[g])
-                    for e,g in zip(err, gen) ]
-                  for err,gen in zip(errors, genotypes) ]
-
     logging.debug("Simulating missing genotypes with uniform probability %.5f...",
                   missing_genotype_prob)
-    missings = [ [ 0 if (e==1 or random.random() >= missing_genotype_prob) else 1
-                   for e in err ]
-                 for err in errors ]
+    missings = [ [ 0 if (random.random() >= missing_genotype_prob) else 1
+                   for j,g in enumerate(gen) ]
+               for i,gen in enumerate(genotypes) ]
     genotypes = [ [ g if m==0 else missing
                     for m,g in zip(mis, gen) ]
                   for mis,gen in zip(missings, genotypes) ]
@@ -269,8 +261,8 @@ for counter, popfiles in enumerate(zip(pedfiles, genfiles, mrkfiles, xoverfiles)
     orig_genotypes = split_into_chromosomes(orig_genotypes, chrs, mrk_map)
     genotypes = split_into_chromosomes(genotypes, chrs, mrk_map)
     haplotypes = split_into_chromosomes(haplotypes, chrs, mrk_map)
-    errors = split_into_chromosomes(errors, chrs, mrk_map)
     missings = split_into_chromosomes(missings, chrs, mrk_map)
+    errors = {}
 
     # Output
     for chrom in chrs:
@@ -278,9 +270,26 @@ for counter, popfiles in enumerate(zip(pedfiles, genfiles, mrkfiles, xoverfiles)
         chromidx = chrom - 1
         first_locus = min([i for i,mm in enumerate(mrk_map) if mm[0]==chrom])
         nloci = len([0 for mm in mrk_map if mm[0]==chrom])
+
+		# Simulate a fixed amount of errors
+        all_positions = [ (i,j)
+                          for i,mis in enumerate(missings[chromidx])
+                          for j,m in enumerate(mis) if m==0 ]
+        no_of_errors = int(math.ceil(len(all_positions)*error_prob))
+        logging.debug("Simulating %d genotyping errors... (error rate=%.5f)",
+                      no_of_errors, error_prob)
+        error_positions = frozenset(random.sample(all_positions, no_of_errors))
+        errors[chromidx] = [ [ 1 if (i,j) in error_positions else 0
+                               for j,g in enumerate(gen) ]
+                             for i,gen in enumerate(genotypes[chromidx]) ]
+        genotypes[chromidx] = [ [ g if e==0 else random.choice(others[g])
+                                  for e,g in zip(err, gen) ]
+                                for err,gen in zip(errors[chromidx], genotypes[chromidx]) ]
+
         no_of_errors = [ sum(err) for err in errors[chromidx] ]
         logging.info("Simulated %d errors (max per individual: %d).",
                      sum(no_of_errors), max(no_of_errors))
+
         no_of_missings = [ sum(mis) for mis in missings[chromidx] ]
         logging.info("Simulated %d missing genotypes (max per individual: %d).",
                      sum(no_of_missings), max(no_of_missings))
